@@ -18,16 +18,21 @@ import matplotlib.pyplot as plt
     
 # exit()
 
-# image = autoui.Screen().screenshot()
-# autoui.Region.get_regions(image)
-# exit()
+image = autoui.ui.screenshot()
+print("got screenshot")
+autoui.Region.get_lines(image)
+print("got lines")
+exit()
 
 with autoui.Process("gnome-calculator") as app:
     with autoui.Window(app.start()) as win:
-        win.move_mouse((0, 0), careful=True)
+        win.move_mouse((0, 0))
         time.sleep(1)
         win.move_mouse((0, -1))
         time.sleep(1)
-        win.move_mouse((-1, -1), careful=True)
+        win.move_mouse((-1, -1))
         time.sleep(1)
         win.move_mouse((-1, 0))
+
+        win.resize((500, 500))
+        time.sleep(5)
