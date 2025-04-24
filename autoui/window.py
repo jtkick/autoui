@@ -86,201 +86,70 @@ class Region:
     @staticmethod
     def get_lines(image, min_length=10):
 
-        # Get rid of text to avoid detecting lines in it
-        # image = erase_text_from_image(image)
+        # Convert to int16 explicitly before doing *any* diff
+        img = image.astype(np.int16)
+        h, w, _ = img.shape
+
+        # Compute the difference between each pixel and its right & bottom neighbors
+        diff_x = img[:, 1:, :] - img[:, :-1, :]
+        diff_y = img[1:, :, :] - img[:-1, :, :]
+
+        # Pad to original size (since diff loses a row/col)
+        edge_map = np.zeros(img.shape, dtype=np.uint8)
+        edge_map[:, 1:] |= np.abs(diff_x).astype(np.uint8)
+        edge_map[1:, :] |= np.abs(diff_y).astype(np.uint8)
 
         # Convert to greyscale, increase contrast a bit, and apply adaptive
         # thresholding to make finding element edges easier
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        # grey = cv2.GaussianBlur(grey, (1, 1), 0)
-        image = cv2.convertScaleAbs(image, alpha=1.5, beta=0)
-        image = cv2.adaptiveThreshold(
-            image, 255, 
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 
-            3, 2
-        )
+        grey = cv2.cvtColor(edge_map, cv2.COLOR_BGR2GRAY)
+        grey = cv2.convertScaleAbs(grey, alpha=2.5, beta=-1)
 
-        # Find all vertical or horizontal lines in image
-        lines = cv2.HoughLinesP(
-            thresh, 1, np.pi/2,
-            threshold=50,
-            minLineLength=40,
-            maxLineGap=5
-        )
+        # Clear out likely shadows and noise
+        EDGE_THRESHOLD = 10
+        binary = np.where(grey > EDGE_THRESHOLD, 1, 0).astype(np.uint8)
 
-        # Draw for debugging
-        if lines is not None:
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                cv2.line(image, (x1, y1), (x2, y2), (0, 255, 255), thickness=1)
-        show(image)
+        # Find all straight lines in image longer than the MIN_LINE_LENGTH
+        MIN_LINE_LENGTH = min_length
+        horizontal = []
+        vertical = []
+        for y in range(h):
+            row = binary[y, :]
+            changes = np.diff(np.concatenate(([0], row, [0])))
+            starts = np.where(changes == 1)[0]
+            ends   = np.where(changes == -1)[0]
+            for s, e in zip(starts, ends):
+                if e - s >= MIN_LINE_LENGTH:
+                    horizontal.append((s, y, e - 1, y))  # row y, from s to e-1
+        for x in range(w):
+            col = binary[:, x]
+            changes = np.diff(np.concatenate(([0], col, [0])))
+            starts = np.where(changes == 1)[0]
+            ends   = np.where(changes == -1)[0]
+            for s, e in zip(starts, ends):
+                if e - s >= MIN_LINE_LENGTH:
+                    vertical.append((x, s, x, e - 1))  # column x, from s to e-1
 
-        # Find rectangles from these lines
-        
-        
-        return
-
-        lines = []
-        for y in range(int(min_length/2), image.shape[0], min_length-1):
-            y_slice = image[y]
-            for x in range(0, image.shape[1]-1):
-                window = y_slice[x:x+2]
-                if not (window[0] == window[1]).all():
-                    # Found a potential line
-                    top, bottom = y, y
-                    x_slice = image[:,x:x+2]
-                    while top > 0:
-                        if not (x_slice[top, 1] == x_slice[y, 1]).all() or\
-                            (x_slice[top, 0] == x_slice[top, 1]).all():
-                            break
-                        top -= 1
-                    while bottom < image.shape[0]:
-                        if not (x_slice[bottom, 1] == x_slice[y, 1]).all() or\
-                            (x_slice[bottom, 0] == x_slice[bottom, 1]).all():
-                            break
-                        bottom += 1
-                    if bottom - top >= min_length:
-                        lines.append((x+1, top, x+1, bottom))
-
-        for line in lines:
-            x1, y1, x2, y2 = line
-            cv2.line(image, (x1, y1), (x2, y2), (0, 255, 255), thickness=2)
-        cv2.imshow("test", image)
-        cv2.waitKey(0)
-        return
+        return horizontal, vertical
+            
 
 
     @staticmethod
     def get_regions(image):
         """Returns the rectangles of potential windows or widgets in the image."""
 
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Find lines in image
+        horizontal, vertical = Region.get_lines(image, min_length = 10)
 
-        # Optional: blur to reduce noise
-        # blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Binarize: try adaptive threshold or simple thresholding
-        thresh = cv2.adaptiveThreshold(
-            gray, 255, 
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY_INV, 
-            11, 2
-        )
-        show(thresh)
-
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        rectangles = []
-
-        for contour in contours:
-            # Approximate contour to a polygon
-            epsilon = 0.02 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-
-            # Check if the polygon has 4 sides and is convex
-            if len(approx) == 4 and cv2.isContourConvex(approx):
-                # Optional: check if it looks like a rectangle (right angles)
-                (x, y, w, h) = cv2.boundingRect(approx)
-                aspect_ratio = float(w) / h
-                area = cv2.contourArea(approx)
-                rect_area = w * h
-                fill_ratio = area / rect_area
-
-                # Heuristic filters
-                if fill_ratio > 0.8 and area > 100:  # tweak as needed
-                    rectangles.append(approx)
-                    cv2.drawContours(image, [approx], -1, (0, 255, 0), 2)
-
-        # Show result
-        cv2.imshow('Rectangles', image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-        return
-
-        lines = []
-        for y, row in enumerate(image):
-            tail = row[0]
-            tail_x = None
-            for x, pixel in enumerate(row):
-                above_pixel = image[max(min(y-1, image.shape[0]), 0)]
-                if not (pixel == tail).all() or (above_pixel == pixel).all():
-                    if tail_x and x - tail_x > 100:
-                        lines.append((tail_x, y, x, y))
-
-                    tail = pixel
-                    tail_x = x
-
-
-
-        if lines is not None:
-            for line in lines:
-                x1, y1, x2, y2 = line
-                cv2.line(image, (x1, y1), (x2, y2), (0, 255, 0), thickness=1)
-        cv2.imshow("test", image)
-        cv2.waitKey(0)
-        return
-
-
-        # Get edges in image
-        grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(grey, 30, 30)
-
-        cv2.imshow("test", edges)
-        cv2.waitKey(0)
-
-        # reader = easyocr.Reader(["en"])
-        # results = reader.readtext(image)
-        # for (bbox, text, prob) in results:
-        #     # print(bbox)
-        #     #print(f"Detected text: {text} (Confidence: {prob:.4f})")
-        #     cv2.rectangle(edges, (int(bbox[0][0]), int(bbox[0][1])), (int(bbox[2][0]), int(bbox[2][1])), (0, 0, 0), thickness=-1)
-        # # cv2.imshow("test", edges)
-        # # cv2.waitKey(0)
-        # # return
-
-
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=500, minLineLength=100, maxLineGap=50)
-
-        mask = np.zeros_like(image)
-        if lines is not None:
-            for line in lines:
-                x1, y1, x2, y2 = line[0]
-                cv2.line(image, (x1, y1), (x2, y2), (0, 255, 255), thickness=2)
-        cv2.imshow("test", image)
-        cv2.waitKey(0)
-        return
-
-        # Find rectangles in image
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        rectangles = []
-        for cnt in contours:
-            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
-            if len(approx) == 4:  # A rectangle should have 4 corners
-                x, y, w, h = cv2.boundingRect(approx)
-                aspect_ratio = w / h
-                if 0.5 < aspect_ratio < 2.0:  # Avoid extreme aspect ratios
-                    rectangles.append((x, y, w, h))
-                    cv2.drawContours(image, [approx], -1, (0, 255, 0), 3)  # Draw rectangle in green
-
-        # Draw rectangles for testing
-        # for rect in rectangles:
-        #     cv2.rectangle(image, rect[0:2], (rect[0] + rect[2], rect[1] + rect[3]), (255, 0, 255), 2)
-
-
-        # # Create a blank mask
-        # mask = np.zeros_like(image)
-
-        # if lines is not None:
-        #     for line in lines:
-        #         x1, y1, x2, y2 = line[0]
-        #         cv2.line(image, (x1, y1), (x2, y2), (0, 255, 255), thickness=2)
-
-
-        cv2.imshow("test", image)
-        cv2.waitKey(0)
+        # Find rectangles from these lines
+        MAX_RADIUS = 20
+        ATTACHMENT_DISTANCE = 5
+        for top in horizontal:
+            # 'top' is the starting line, i.e., the top of the rectangle
+            # So the first step is to find the right side of the rectangle
+            candidates = [
+                line for line in vertical
+                if -3 < line[1] - top[3] < ATTACHMENT_DISTANCE
+            ]
 
 class Window(Region):
 

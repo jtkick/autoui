@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import cv2
 import time
 
 import autoui
@@ -20,8 +21,21 @@ import matplotlib.pyplot as plt
 
 image = autoui.ui.screenshot()
 print("got screenshot")
-autoui.Region.get_lines(image)
-print("got lines")
+
+# Test get lines
+h, v = autoui.Region.get_lines(image)
+for line in h:
+    x1, y1, x2, y2 = line
+    cv2.line(image, (x1, y1), (x2, y2), (255, 0, 0), thickness=1)
+for line in v:
+    x1, y1, x2, y2 = line
+    cv2.line(image, (x1, y1), (x2, y2), (0, 255, 0), thickness=1)
+cv2.imshow("lines", image)
+cv2.waitKey(0)
+
+# Test get regions
+autoui.Region.get_regions(image)
+
 exit()
 
 with autoui.Process("gnome-calculator") as app:
