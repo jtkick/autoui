@@ -8,30 +8,15 @@ import autoui
 import numpy as np
 import matplotlib.pyplot as plt
 
-# with autoui.Screen() as s:
-#     s.move_mouse((10, 10))
-#     time.sleep(1)
-#     s.move_mouse((-10, 10))
-#     time.sleep(1)
-#     s.move_mouse((10, -10))
-#     time.sleep(1)
-#     s.move_mouse((-10, -10))
-    
-# exit()
-
-image = autoui.ui.screenshot()
-print("got screenshot")
+# image = autoui.ui.screenshot()
+image = cv2.imread('./test_box.png')
 
 # Test get lines
-h, v = autoui.Region.get_lines(image)
-for line in h:
-    x1, y1, x2, y2 = line
-    cv2.line(image, (x1, y1), (x2, y2), (255, 0, 0), thickness=1)
-for line in v:
-    x1, y1, x2, y2 = line
-    cv2.line(image, (x1, y1), (x2, y2), (0, 255, 0), thickness=1)
-cv2.imshow("lines", image)
-cv2.waitKey(0)
+# h, v = autoui.Region.get_lines(image)
+# print('h:', h)
+# print('v:', v)
+# print()
+# autoui.Region.show_lines(image)
 
 # Test get regions
 autoui.Region.get_regions(image)

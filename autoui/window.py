@@ -90,7 +90,8 @@ class Region:
         img = image.astype(np.int16)
         h, w, _ = img.shape
 
-        # Compute the difference between each pixel and its right & bottom neighbors
+        # Compute the difference between each pixel and its right & bottom
+        # neighbors
         diff_x = img[:, 1:, :] - img[:, :-1, :]
         diff_y = img[1:, :, :] - img[:-1, :, :]
 
@@ -99,8 +100,8 @@ class Region:
         edge_map[:, 1:] |= np.abs(diff_x).astype(np.uint8)
         edge_map[1:, :] |= np.abs(diff_y).astype(np.uint8)
 
-        # Convert to greyscale, increase contrast a bit, and apply adaptive
-        # thresholding to make finding element edges easier
+        # Convert to greyscale and increase contrast a bit to make finding
+        # element edges easier
         grey = cv2.cvtColor(edge_map, cv2.COLOR_BGR2GRAY)
         grey = cv2.convertScaleAbs(grey, alpha=2.5, beta=-1)
 
@@ -129,28 +130,163 @@ class Region:
                 if e - s >= MIN_LINE_LENGTH:
                     vertical.append((x, s, x, e - 1))  # column x, from s to e-1
 
-        return horizontal, vertical
-            
+        return \
+            np.array(horizontal, dtype=np.int64),\
+            np.array(vertical, dtype=np.int64)
 
+    @classmethod
+    def show_lines(cls, image, *args, **kwargs):
+        """Runs 'get_lines()' and displays the image with the lines drawn on
+        it."""
+        # Don't draw on image, leave it unchanged
+        image = image.copy()
+        # Get lines
+        h, v = cls.get_lines(image, *args, **kwargs)
+        # Draw on image
+        for line in h:
+            x1, y1, x2, y2 = line
+            cv2.line(image, (x1, y1), (x2-1, y2), (255, 0, 0), thickness=1)
+        for line in v:
+            x1, y1, x2, y2 = line
+            cv2.line(image, (x1, y1), (x2, y2-1), (0, 255, 0), thickness=1)
+        # Display image
+        cv2.imshow("Lines", image)
+        cv2.waitKey(0)
 
     @staticmethod
     def get_regions(image):
-        """Returns the rectangles of potential windows or widgets in the image."""
-
+        """Returns the rectangles of potential windows or widgets in the image.
+        """
         # Find lines in image
         horizontal, vertical = Region.get_lines(image, min_length = 10)
-
-        # Find rectangles from these lines
+        # To start, we're going to create a graph of each line and it's
+        # possible connected lines
+        graph = {}
+        ATTACHMENT_DISTANCE = 1
         MAX_RADIUS = 20
-        ATTACHMENT_DISTANCE = 5
-        for top in horizontal:
-            # 'top' is the starting line, i.e., the top of the rectangle
-            # So the first step is to find the right side of the rectangle
-            candidates = [
-                line for line in vertical
-                if -3 < line[1] - top[3] < ATTACHMENT_DISTANCE
-            ]
+        MAX_CORNER_DISTANCE = MAX_RADIUS * math.sqrt(2)
+        # I tried generalizing this, but it just became a mess of a brain
+        # teaser, so I'm going to leave it all written out
+        for line in horizontal:
+            # Ensure lines are horizontal
+            assert(line[0] < line[2])
+            assert(line[1] == line[3])
+            connections = {}
+            # Start with left end
+            point = line[0:2]
+            # Look up and to the left
+            rel = (vertical[:, 2:4] - point) * (-1, -1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['ul'] = vertical[mask]
+            # Look left
+            rel = (horizontal[:, 2:4] - point) * (-1, -1)
+            mask = (0 <= rel[:,0]) & (rel[:,0] <= ATTACHMENT_DISTANCE)
+            connections['l'] = vertical[mask]
+            # Look down and to the left
+            rel = (vertical[:, 0:2] - point) * (-1, 1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['dl'] = vertical[mask]
+            # Move to right end
+            point = line[2:4]
+            # Look up and to the right
+            rel = (vertical[:, 2:4] - point) * (1, -1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['ur'] = vertical[mask]
+            # Look right
+            rel = (horizontal[:, 0:2] - point) * (1, 1)
+            mask = (0 <= rel[:,0]) & (rel[:,0] <= ATTACHMENT_DISTANCE)
+            connections['r'] = horizontal[mask]
+            # Look down and to the right
+            rel = (vertical[:, 0:2] - point) * (1, 1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['dr'] = vertical[mask]
+            # These connections make up this node
+            graph[tuple(line)] = connections
+        # Now check all vertical lines
+        for line in vertical:
+            # Ensure line is vertical
+            assert(line[0] == line[2])
+            assert(line[1] < line[3])
+            connections = {}
+            # Start with top end
+            point = line[0:2]
+            # Look up and to the left
+            rel = (horizontal[:, 2:4] - point) * (-1, -1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['ul'] = horizontal[mask]
+            # Look up
+            rel = (vertical[:, 2:4] - point)* (-1, -1)
+            mask = (0 <= rel[:,1]) & (rel[:,1] <= ATTACHMENT_DISTANCE)
+            connections['l'] = vertical[mask]
+            # Look up and to the right
+            rel = (horizontal[:, 0:2] - point) * (1, -1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['ur'] = horizontal[mask]
+            # Move to bottom end
+            point = line[2:4]
+            # Look down and to the left
+            rel = (horizontal[:, 2:4] - point) * (-1, 1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['dl'] = horizontal[mask]
+            # Look down
+            rel = (vertical[:, 0:2] - point) * (1, 1)
+            mask = (0 <= rel[:,1]) & (rel[:,1] <= ATTACHMENT_DISTANCE)
+            connections['r'] = vertical[mask]
+            # Look down and to the right
+            rel = (horizontal[:, 0:2] - point) * (1, 1)
+            mask = \
+                (0 <= rel[:,0]) & (rel[:,0] <= MAX_CORNER_DISTANCE) & \
+                (0 <= rel[:,1]) & (rel[:,1] <= MAX_CORNER_DISTANCE) & \
+                (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
+            connections['dr'] = horizontal[mask]
+            # These connections make up this node
+            graph[tuple(line)] = connections
+        
+        # For testing, draw lines and their connections
+        img = image.copy()
+        for line, conns in graph.items():
+            img = image.copy()
+            # Draw line in yellow
+            x1, y1, x2, y2 = line
+            cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), thickness=1)
+            # Draw out-of-phase connections in red
+            oop = np.concatenate((
+                conns['ur'], conns['ul'], conns['dr'], conns['dl']
+            ))
+            for x1, y1, x2, y2 in oop:
+                cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), thickness=1)
+            # Draw in-phase connections in blue
+            ip = np.concatenate((conns['l'], conns['r']))
+            for x1, y1, x2, y2 in ip:
+                cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=1)
 
+            cv2.imshow("connections", img)
+            cv2.waitKey(0)
+
+
+        return  
+        
 class Window(Region):
 
     def __init__(self, open=None, timeout=5.0):
