@@ -9,7 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # image = autoui.ui.screenshot()
-image = cv2.imread('./test_box.png')
+
+image = cv2.imread('./test_window.png')
 
 # Test get lines
 # h, v = autoui.Region.get_lines(image)

@@ -8,7 +8,6 @@ import numpy as np
 from playsound import playsound
 import pyautogui
 import pytesseract
-# import pyglm
 import random
 from skimage.metrics import structural_similarity as ssim
 import threading
@@ -184,7 +183,7 @@ class Region:
             # Look left
             rel = (horizontal[:, 2:4] - point) * (-1, -1)
             mask = (0 <= rel[:,0]) & (rel[:,0] <= ATTACHMENT_DISTANCE)
-            connections['l'] = vertical[mask]
+            connections['l'] = horizontal[mask]
             # Look down and to the left
             rel = (vertical[:, 0:2] - point) * (-1, 1)
             mask = \
@@ -213,7 +212,7 @@ class Region:
                 (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
             connections['dr'] = vertical[mask]
             # These connections make up this node
-            graph[tuple(line)] = connections
+            graph[tuple(line.tolist())] = connections
         # Now check all vertical lines
         for line in vertical:
             # Ensure line is vertical
@@ -261,28 +260,87 @@ class Region:
                 (abs(rel[:,0] - rel[:,1]) <= ATTACHMENT_DISTANCE)
             connections['dr'] = horizontal[mask]
             # These connections make up this node
-            graph[tuple(line)] = connections
-        
-        # For testing, draw lines and their connections
-        img = image.copy()
-        for line, conns in graph.items():
-            img = image.copy()
-            # Draw line in yellow
-            x1, y1, x2, y2 = line
-            cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), thickness=1)
-            # Draw out-of-phase connections in red
-            oop = np.concatenate((
-                conns['ur'], conns['ul'], conns['dr'], conns['dl']
-            ))
-            for x1, y1, x2, y2 in oop:
-                cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), thickness=1)
-            # Draw in-phase connections in blue
-            ip = np.concatenate((conns['l'], conns['r']))
-            for x1, y1, x2, y2 in ip:
-                cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=1)
+            graph[tuple(line.tolist())] = connections
 
-            cv2.imshow("connections", img)
-            cv2.waitKey(0)
+        # Do some reformatting since we need all lines to be tuples for graph
+        # lookup
+        for line, connections in graph.items():
+            for direction in connections.keys():
+                graph[line][direction] = \
+                    tuple([tuple(l.tolist()) for l in connections[direction]])
+        
+        # # For testing, draw lines and their connections
+        # img = image.copy()
+        # for line, conns in graph.items():
+        #     img = image.copy()
+        #     # Draw line in yellow
+        #     x1, y1, x2, y2 = line
+        #     cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), thickness=3)
+        #     # Draw out-of-phase connections in red
+        #     oop = conns['ur'] + conns['ul'] + conns['dr'] + conns['dl']
+        #     for x1, y1, x2, y2 in oop:
+        #         cv2.line(img, (x1, y1), (x2, y2), (0, 0, 255), thickness=3)
+        #     # Draw in-phase connections in blue
+        #     for x1, y1, x2, y2 in conns['l'] + conns['r']:
+        #         cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=3)
+        #     cv2.imshow("connections", img)
+        #     cv2.waitKey(0)
+
+        # Now that we have a graph of line connections, traverse the graph and
+        # find any path that returns back to the original line to
+
+        possible_regions = []
+        for top, connections in graph.items():
+            for right in connections['dr']:
+                for bottom in graph[right]['dl']:
+                    for left in graph[bottom]['ul']:
+                        if top in graph[left]['ur']:
+                            possible_regions.append([top, right, bottom, left])
+        # Convert these to rectangles
+        windows = []
+        for region in possible_regions:
+            windows.append((
+                (
+                    min([l[0] for l in region]),
+                    min([l[1] for l in region])
+                ),
+                (
+                    max([l[2] for l in region]),
+                    max([l[3] for l in region])
+                )
+            ))
+
+        # Now draw windows
+        img = image.copy()
+        for window in windows:
+            cv2.rectangle(img, window[0], window[1], (255, 0, 0), 3)
+            cv2.putText(img, 'window', (window[0][0], window[0][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,0,0), 2)
+        cv2.imshow('windows', img)
+        cv2.waitKey(0)
+
+        # possible_regions = []
+        # def dfs(node, path, visited_set):
+        #     if node in path:
+        #         cycle_start = path.index(node)
+        #         cycle = path[cycle_start:] + [node]
+        #         possible_regions.append(cycle)
+        #         return
+        #     visited_set.add(node)
+        #     path.append(node)
+        #     for direction in ['ul', 'l', 'dl', 'ur', 'r', 'dr']:
+        #         for neighbor in graph[node][direction]:
+        #             dfs(neighbor, path.copy(), visited_set.copy())
+
+        # print('possible regions:', possible_regions)
+        # img = image.copy()
+        # for region in possible_regions:
+        #     for line in region:
+        #         x1, y1, x2, y2 = line
+        #         cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=5)
+        # cv2.imshow("region", img)
+        # cv2.waitKey(0)
+
+            
 
 
         return  
