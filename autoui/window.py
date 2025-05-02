@@ -2,6 +2,7 @@ import cv2
 import datetime
 import easyocr
 import math
+import matplotlib.pyplot as plt
 import pathlib
 from pynput import mouse
 import numpy as np
@@ -85,9 +86,11 @@ class Region:
     @staticmethod
     def get_lines(image, min_length=10):
 
+        show(image)
+
         # Convert to int16 explicitly before doing *any* diff
-        img = image.astype(np.int16)
-        h, w, _ = img.shape
+        img = image.astype(np.int32)
+        height, width, _ = img.shape
 
         # Compute the difference between each pixel and its right & bottom
         # neighbors
@@ -95,13 +98,61 @@ class Region:
         diff_y = img[1:, :, :] - img[:-1, :, :]
 
         # Pad to original size (since diff loses a row/col)
-        edge_map = np.zeros(img.shape, dtype=np.uint8)
-        edge_map[:, 1:] |= np.abs(diff_x).astype(np.uint8)
-        edge_map[1:, :] |= np.abs(diff_y).astype(np.uint8)
+        edge_map = np.zeros(img.shape, dtype=np.uint16)
+        edge_map[:, 1:] |= np.abs(diff_x).astype(np.uint16)
+        edge_map[1:, :] |= np.abs(diff_y).astype(np.uint16)
+
+        # Scale down to fit within a uint8 array
+        edge_map = edge_map / edge_map.max()
+        edge_map = np.round(edge_map * 255)
+        edge_map = edge_map.astype(np.uint8)
+
+
+
+        color_threshold = 3
+
+        img = edge_map.astype(np.int16)  # to allow subtraction without wraparound
+        h, w, c = img.shape
+
+        # Shifted neighbors
+        up    = np.zeros_like(img)
+        down  = np.zeros_like(img)
+        left  = np.zeros_like(img)
+        right = np.zeros_like(img)
+
+        up[1:]     = img[:-1]
+        down[:-1]  = img[1:]
+        left[:,1:] = img[:,:-1]
+        right[:,:-1] = img[:,1:]
+
+        # Compute per-pixel color distance to each neighbor
+        dist_up    = np.linalg.norm(img - up, axis=2)
+        dist_down  = np.linalg.norm(img - down, axis=2)
+        dist_left  = np.linalg.norm(img - left, axis=2)
+        dist_right = np.linalg.norm(img - right, axis=2)
+
+        # Keep pixels that match *any* neighbor
+        keep_mask = (
+            (dist_up < color_threshold) |
+            (dist_down < color_threshold) |
+            (dist_left < color_threshold) |
+            (dist_right < color_threshold)
+        )
+
+        # Suppress others (set to black or gray)
+        result = img.copy()
+        result[~keep_mask] = 0  # or [128, 128, 128] if you prefer
+        show(result.astype(np.uint8))
+        print(result.shape)
+
+
+
+
+
 
         # Convert to greyscale and increase contrast a bit to make finding
         # element edges easier
-        grey = cv2.cvtColor(edge_map, cv2.COLOR_BGR2GRAY)
+        grey = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2GRAY)
         grey = cv2.convertScaleAbs(grey, alpha=2.5, beta=-1)
 
         # Clear out likely shadows and noise
@@ -110,28 +161,35 @@ class Region:
 
         # Find all straight lines in image longer than the MIN_LINE_LENGTH
         MIN_LINE_LENGTH = min_length
-        horizontal = []
-        vertical = []
-        for y in range(h):
+        h = []
+        v = []
+        for y in range(height):
             row = binary[y, :]
             changes = np.diff(np.concatenate(([0], row, [0])))
             starts = np.where(changes == 1)[0]
             ends   = np.where(changes == -1)[0]
             for s, e in zip(starts, ends):
                 if e - s >= MIN_LINE_LENGTH:
-                    horizontal.append((s, y, e - 1, y))  # row y, from s to e-1
-        for x in range(w):
+                    h.append((s, y, e - 1, y))  # row y, from s to e-1
+        for x in range(width):
             col = binary[:, x]
             changes = np.diff(np.concatenate(([0], col, [0])))
             starts = np.where(changes == 1)[0]
             ends   = np.where(changes == -1)[0]
             for s, e in zip(starts, ends):
                 if e - s >= MIN_LINE_LENGTH:
-                    vertical.append((x, s, x, e - 1))  # column x, from s to e-1
+                    v.append((x, s, x, e - 1))  # column x, from s to e-1
 
-        return \
-            np.array(horizontal, dtype=np.int64),\
-            np.array(vertical, dtype=np.int64)
+        # We're going to filter by the ratio of each line's variance to it's
+        # length, the idea being, any line we're looking for will be all, or
+        # mostly all the same pixel values, whereas lines from images or just
+        # background noise will have a high variance
+        h = [l for l in h \
+            if np.var(image[l[1], l[0]:l[2]])/14450/(l[2]-l[0]) < 0.00001]
+        v = [l for l in v \
+            if np.var(image[l[1]:l[3], l[0]])/14450/(l[3]-l[1]) < 0.00001]
+
+        return np.array(h, dtype=np.int64), np.array(v, dtype=np.int64)
 
     @classmethod
     def show_lines(cls, image, *args, **kwargs):
@@ -339,9 +397,6 @@ class Region:
         #         cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), thickness=5)
         # cv2.imshow("region", img)
         # cv2.waitKey(0)
-
-            
-
 
         return windows
         
